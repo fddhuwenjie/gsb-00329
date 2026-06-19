@@ -138,7 +138,7 @@ const visiblePages = computed(() => {
 const fetchPosts = async () => {
   loading.value = true
   try {
-    const result = await getAllPostsPaginated({ page: currentPage.value, limit, status: 'published' })
+    const result = await getAllPostsPaginated({ page: currentPage.value, limit })
     posts.value = result.data
     totalPages.value = result.totalPages
   } finally {

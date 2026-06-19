@@ -4,8 +4,7 @@ import { postRepository } from '../repositories/postRepository.js'
 const router = Router()
 
 router.get('/', (req, res) => {
-  const result = postRepository.findAllPaginated({ status: 'published', limit: 20 })
-  const posts = result.data
+  const posts = postRepository.getLatestPublished(50)
   
   const baseUrl = process.env.SITE_URL || 'http://localhost:8091'
   const now = new Date().toUTCString()

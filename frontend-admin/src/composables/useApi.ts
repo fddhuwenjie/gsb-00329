@@ -2,6 +2,8 @@ import { ref } from 'vue'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
 
+export type PostStatus = 'draft' | 'published' | 'archived'
+
 export interface Post {
   id: number
   slug: string
@@ -11,7 +13,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number
@@ -55,6 +57,7 @@ export interface Stats {
   total_posts: number
   published_posts: number
   draft_posts: number
+  archived_posts: number
   total_views: number
   total_likes: number
   total_categories: number
@@ -89,13 +92,12 @@ export const useApi = () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  // Posts
-  const getAllPosts = async (options?: { status?: 'draft' | 'published', page?: number, limit?: number, search?: string }) => {
+  const getAllPosts = async (options?: { status?: PostStatus | 'all', page?: number, limit?: number, search?: string }) => {
     loading.value = true
     error.value = null
     try {
       const params = new URLSearchParams()
-      if (options?.status) params.append('status', options.status)
+      if (options?.status && options.status !== 'all') params.append('status', options.status)
       if (options?.page) params.append('page', options.page.toString())
       if (options?.limit) params.append('limit', options.limit.toString())
       if (options?.search) params.append('search', options.search)
@@ -126,18 +128,13 @@ export const useApi = () => {
   const createPost = async (post: Partial<Post>) => {
     loading.value = true
     error.value = null
-    console.log('Creating post:', post)
     try {
-      const body = JSON.stringify(post)
-      console.log('Request body:', body)
       const result = await fetchApi<Post>('/posts', {
         method: 'POST',
-        body
+        body: JSON.stringify(post)
       })
-      console.log('Post created:', result)
       return result
     } catch (e) {
-      console.error('Create post error:', e)
       error.value = (e as Error).message
       throw e
     } finally {
@@ -161,6 +158,38 @@ export const useApi = () => {
     }
   }
 
+  const updatePostStatus = async (id: number, status: PostStatus) => {
+    loading.value = true
+    error.value = null
+    try {
+      return await fetchApi<Post>(`/posts/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status })
+      })
+    } catch (e) {
+      error.value = (e as Error).message
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const bulkUpdateStatus = async (ids: number[], status: PostStatus) => {
+    loading.value = true
+    error.value = null
+    try {
+      return await fetchApi<{ updated: number }>('/posts/bulk/status', {
+        method: 'PUT',
+        body: JSON.stringify({ ids, status })
+      })
+    } catch (e) {
+      error.value = (e as Error).message
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
   const deletePost = async (id: number) => {
     loading.value = true
     error.value = null
@@ -175,7 +204,6 @@ export const useApi = () => {
     }
   }
 
-  // Categories
   const getAllCategories = async () => {
     loading.value = true
     error.value = null
@@ -248,7 +276,6 @@ export const useApi = () => {
     }
   }
 
-  // Authors
   const getAllAuthors = async () => {
     loading.value = true
     error.value = null
@@ -262,7 +289,6 @@ export const useApi = () => {
     }
   }
 
-  // Stats
   const getStats = async () => {
     loading.value = true
     error.value = null
@@ -276,7 +302,6 @@ export const useApi = () => {
     }
   }
 
-  // Upload
   const uploadImage = async (file: File): Promise<UploadResult | null> => {
     loading.value = true
     error.value = null
@@ -316,6 +341,8 @@ export const useApi = () => {
     getPostById,
     createPost,
     updatePost,
+    updatePostStatus,
+    bulkUpdateStatus,
     deletePost,
     getAllCategories,
     getCategoryById,
@@ -325,5 +352,23 @@ export const useApi = () => {
     getAllAuthors,
     getStats,
     uploadImage
+  }
+}
+
+export function getStatusLabel(status: PostStatus): string {
+  switch (status) {
+    case 'published': return '已发布'
+    case 'draft': return '草稿'
+    case 'archived': return '已下线'
+    default: return status
+  }
+}
+
+export function getStatusBadgeClass(status: PostStatus): string {
+  switch (status) {
+    case 'published': return 'bg-emerald-100 text-emerald-700'
+    case 'draft': return 'bg-amber-100 text-amber-700'
+    case 'archived': return 'bg-slate-100 text-slate-700'
+    default: return 'bg-slate-100 text-slate-700'
   }
 }

@@ -2,12 +2,13 @@ import express from 'express'
 import cors from 'cors'
 import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
-import { initDatabase, db } from './db.js'
+import { initDatabase } from './db.js'
 import postsRouter from './routes/posts.js'
 import categoriesRouter from './routes/categories.js'
 import authorsRouter from './routes/authors.js'
 import uploadRouter from './routes/upload.js'
 import rssRouter from './routes/rss.js'
+import { postRepository } from './repositories/postRepository.js'
 import { existsSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
@@ -71,16 +72,7 @@ app.use('/rss', rssRouter)
 
 // Stats endpoint
 app.get('/api/stats', (req, res) => {
-  const stats = db.prepare(`
-    SELECT 
-      (SELECT COUNT(*) FROM posts) as total_posts,
-      (SELECT COUNT(*) FROM posts WHERE status = 'published') as published_posts,
-      (SELECT COUNT(*) FROM posts WHERE status = 'draft') as draft_posts,
-      (SELECT COALESCE(SUM(views), 0) FROM posts) as total_views,
-      (SELECT COALESCE(SUM(likes), 0) FROM posts) as total_likes,
-      (SELECT COUNT(*) FROM categories) as total_categories,
-      (SELECT COUNT(*) FROM authors) as total_authors
-  `).get()
+  const stats = postRepository.getStats()
   res.json(stats)
 })
 
