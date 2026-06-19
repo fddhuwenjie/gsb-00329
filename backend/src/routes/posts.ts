@@ -1,44 +1,37 @@
 import { Router } from 'express'
 import { body, param, query, validationResult } from 'express-validator'
 import { postRepository } from '../repositories/postRepository.js'
+import type { PostStatus, BatchUpdateStatusInput } from '../types.js'
 
 const router = Router()
 
-// Get all posts with pagination and search
-router.get('/', 
-  query('status').optional().isIn(['draft', 'published']),
-  query('page').optional().isInt({ min: 1 }),
-  query('limit').optional().isInt({ min: 1, max: 100 }),
-  query('search').optional().trim(),
-  (req, res) => {
-    const errors = validationResult(req)
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() })
-    }
-    const status = req.query.status as 'draft' | 'published' | undefined
-    const page = parseInt(req.query.page as string) || 1
-    const limit = parseInt(req.query.limit as string) || 20
-    const search = req.query.search as string | undefined
-    
-    const result = postRepository.findAllPaginated({ status, page, limit, search })
-    res.json(result)
-  }
-)
+const ALL_STATUSES: PostStatus[] = ['draft', 'published', 'archived']
 
-// Search posts
+function validateStatus(value?: string): PostStatus | undefined {
+  if (!value) return undefined
+  if (!ALL_STATUSES.includes(value as PostStatus)) {
+    throw new Error(`Invalid status. Must be one of: ${ALL_STATUSES.join(', ')}`)
+  }
+  return value as PostStatus
+}
+
 router.get('/search',
   query('q').notEmpty().trim(),
+  query('status').optional().custom((value) => {
+    if (value) validateStatus(value as string)
+    return true
+  }),
   (req, res) => {
     const errors = validationResult(req)
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() })
     }
-    const posts = postRepository.search(req.query.q as string)
+    const status = req.query.status ? validateStatus(req.query.status as string) : undefined
+    const posts = postRepository.search(req.query.q as string, status || ALL_STATUSES)
     res.json(posts)
   }
 )
 
-// Get post by slug
 router.get('/slug/:slug',
   param('slug').notEmpty().trim().escape(),
   (req, res) => {
@@ -50,16 +43,34 @@ router.get('/slug/:slug',
   }
 )
 
-// Get posts by category
 router.get('/category/:slug',
   param('slug').notEmpty().trim().escape(),
+  query('status').optional().custom((value) => {
+    if (value) validateStatus(value as string)
+    return true
+  }),
   (req, res) => {
-    const posts = postRepository.findByCategory(req.params.slug)
+    const status = req.query.status ? validateStatus(req.query.status as string) : ALL_STATUSES
+    const posts = postRepository.findByCategory(req.params.slug, status)
     res.json(posts)
   }
 )
 
-// Get related posts
+router.post('/batch-status',
+  body('ids').isArray({ min: 1 }).withMessage('Must provide at least one post ID'),
+  body('ids.*').isInt(),
+  body('status').isIn(['draft', 'published', 'archived']),
+  (req, res) => {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() })
+    }
+    const { ids, status } = req.body as BatchUpdateStatusInput
+    const result = postRepository.batchUpdateStatus(ids, status)
+    res.json(result)
+  }
+)
+
 router.get('/:id/related',
   param('id').isInt(),
   query('limit').optional().isInt({ min: 1, max: 10 }),
@@ -70,7 +81,44 @@ router.get('/:id/related',
   }
 )
 
-// Get post by ID
+router.get('/', 
+  query('status').optional().custom((value) => {
+    if (value) {
+      const statuses = Array.isArray(value) ? value : [value]
+      for (const s of statuses) {
+        validateStatus(s)
+      }
+    }
+    return true
+  }),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('search').optional().trim(),
+  (req, res) => {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() })
+    }
+    
+    let statusFilter: PostStatus | PostStatus[] | undefined
+    const statusParam = req.query.status
+    if (statusParam) {
+      const statuses = Array.isArray(statusParam) ? statusParam : [statusParam]
+      statusFilter = statuses.map(s => validateStatus(s) as PostStatus)
+      if (statusFilter.length === 1) {
+        statusFilter = statusFilter[0]
+      }
+    }
+    
+    const page = parseInt(req.query.page as string) || 1
+    const limit = parseInt(req.query.limit as string) || 20
+    const search = req.query.search as string | undefined
+    
+    const result = postRepository.findAllPaginated({ status: statusFilter, page, limit, search })
+    res.json(result)
+  }
+)
+
 router.get('/:id',
   param('id').isInt(),
   (req, res) => {
@@ -82,7 +130,6 @@ router.get('/:id',
   }
 )
 
-// Create post
 router.post('/',
   body('title').notEmpty().trim().isLength({ min: 1, max: 500 }),
   body('slug').notEmpty().trim().isLength({ min: 1, max: 200 })
@@ -92,7 +139,7 @@ router.post('/',
   body('image').optional().trim(),
   body('category_id').optional().isInt(),
   body('author_id').optional().isInt(),
-  body('status').optional().isIn(['draft', 'published']),
+  body('status').optional().isIn(['draft', 'published', 'archived']),
   body('read_time').optional().isInt({ min: 1, max: 999 }),
   body('tags').optional().isArray({ max: 20 }),
   body('tags.*').optional().isString().isLength({ max: 50 }),
@@ -113,7 +160,6 @@ router.post('/',
   }
 )
 
-// Update post
 router.put('/:id',
   param('id').isInt(),
   body('title').optional().trim().isLength({ min: 1, max: 500 }),
@@ -124,7 +170,7 @@ router.put('/:id',
   body('image').optional().trim(),
   body('category_id').optional().isInt(),
   body('author_id').optional().isInt(),
-  body('status').optional().isIn(['draft', 'published']),
+  body('status').optional().isIn(['draft', 'published', 'archived']),
   body('read_time').optional().isInt({ min: 1, max: 999 }),
   body('tags').optional().isArray({ max: 20 }),
   body('tags.*').optional().isString().isLength({ max: 50 }),
@@ -148,7 +194,6 @@ router.put('/:id',
   }
 )
 
-// Delete post
 router.delete('/:id',
   param('id').isInt(),
   (req, res) => {
@@ -156,24 +201,6 @@ router.delete('/:id',
     if (!deleted) {
       return res.status(404).json({ error: 'Post not found' })
     }
-    res.status(204).send()
-  }
-)
-
-// Increment views
-router.post('/:id/view',
-  param('id').isInt(),
-  (req, res) => {
-    postRepository.incrementViews(parseInt(req.params.id))
-    res.status(204).send()
-  }
-)
-
-// Increment likes
-router.post('/:id/like',
-  param('id').isInt(),
-  (req, res) => {
-    postRepository.incrementLikes(parseInt(req.params.id))
     res.status(204).send()
   }
 )

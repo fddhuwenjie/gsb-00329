@@ -1,13 +1,11 @@
 <template>
   <div class="space-y-8">
-    <!-- Header -->
     <div>
       <h1 class="text-3xl font-bold text-slate-900">仪表盘</h1>
       <p class="text-slate-600 mt-1">欢迎回来，查看博客的最新数据</p>
     </div>
 
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
       <div class="bg-white rounded-xl border border-slate-200 p-6">
         <div class="flex items-center gap-4">
           <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -38,6 +36,34 @@
 
       <div class="bg-white rounded-xl border border-slate-200 p-6">
         <div class="flex items-center gap-4">
+          <div class="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center">
+            <svg class="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-sm text-slate-600">草稿</p>
+            <p class="text-2xl font-bold text-slate-900">{{ stats?.draft_posts || 0 }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-6">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+            <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-sm text-slate-600">已下线</p>
+            <p class="text-2xl font-bold text-slate-900">{{ stats?.archived_posts || 0 }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-6">
+        <div class="flex items-center gap-4">
           <div class="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
             <svg class="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -45,28 +71,13 @@
             </svg>
           </div>
           <div>
-            <p class="text-sm text-slate-600">总浏览量</p>
+            <p class="text-sm text-slate-600">总浏览</p>
             <p class="text-2xl font-bold text-slate-900">{{ formatNumber(stats?.total_views || 0) }}</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-xl border border-slate-200 p-6">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 bg-pink-100 rounded-xl flex items-center justify-center">
-            <svg class="w-6 h-6 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-            </svg>
-          </div>
-          <div>
-            <p class="text-sm text-slate-600">总点赞</p>
-            <p class="text-2xl font-bold text-slate-900">{{ stats?.total_likes || 0 }}</p>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Recent Posts -->
     <div class="bg-white rounded-xl border border-slate-200">
       <div class="p-6 border-b border-slate-200">
         <div class="flex items-center justify-between">
@@ -79,11 +90,16 @@
       <div class="divide-y divide-slate-200">
         <div v-for="post in recentPosts" :key="post.id" class="p-6 flex items-center gap-4">
           <div class="w-16 h-16 bg-slate-100 rounded-lg overflow-hidden flex-shrink-0">
-            <img :src="post.image || ''" :alt="post.title" class="w-full h-full object-cover" />
+            <img v-if="post.image" :src="getImageUrl(post.image)" :alt="post.title" class="w-full h-full object-cover" />
+            <div v-else class="w-full h-full flex items-center justify-center text-slate-400">
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </div>
           </div>
           <div class="flex-1 min-w-0">
             <h3 class="font-semibold text-slate-900 truncate">{{ post.title }}</h3>
-            <p class="text-sm text-slate-600">{{ post.category }} · {{ formatDate(post.created_at) }}</p>
+            <p class="text-sm text-slate-600">{{ post.category || '未分类' }} · {{ formatDate(post.created_at) }}</p>
           </div>
           <div class="flex items-center gap-4 text-sm text-slate-500">
             <span class="flex items-center gap-1">
@@ -93,8 +109,8 @@
               </svg>
               {{ post.views }}
             </span>
-            <span :class="['px-2 py-1 text-xs font-medium rounded', post.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700']">
-              {{ post.status === 'published' ? '已发布' : '草稿' }}
+            <span :class="['px-2 py-1 text-xs font-medium rounded', getStatusClass(post.status)]">
+              {{ getStatusLabel(post.status) }}
             </span>
           </div>
         </div>
@@ -104,7 +120,6 @@
       </div>
     </div>
 
-    <!-- Quick Actions -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <router-link to="/posts/new" class="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-6 text-white hover:from-emerald-600 hover:to-emerald-700 transition-all">
         <div class="flex items-center gap-4">
@@ -139,7 +154,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useApi, type Post, type Stats } from '../composables/useApi'
+import { useApi, type Post, type Stats, type PostStatus } from '../composables/useApi'
+
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
 
 const { getAllPosts, getStats } = useApi()
 
@@ -156,6 +173,29 @@ const formatNumber = (num: number) => {
 const formatDate = (dateStr: string) => {
   const date = new Date(dateStr)
   return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+}
+
+const getImageUrl = (image: string | null) => {
+  if (!image) return ''
+  if (image.startsWith('http') || image.startsWith('data:')) return image
+  if (image.startsWith('/uploads')) return `${API_BASE.replace('/api', '')}${image}`
+  return image
+}
+
+const getStatusLabel = (status: PostStatus) => {
+  switch (status) {
+    case 'published': return '已发布'
+    case 'draft': return '草稿'
+    case 'archived': return '已下线'
+  }
+}
+
+const getStatusClass = (status: PostStatus) => {
+  switch (status) {
+    case 'published': return 'bg-emerald-100 text-emerald-700'
+    case 'draft': return 'bg-slate-100 text-slate-700'
+    case 'archived': return 'bg-amber-100 text-amber-700'
+  }
 }
 
 onMounted(async () => {

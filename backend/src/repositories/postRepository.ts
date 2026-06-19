@@ -1,5 +1,6 @@
-import { db } from '../db.js'
-import type { Post, CreatePostInput, UpdatePostInput } from '../types.js'
+import { db as defaultDb } from '../db.js'
+import type { Post, PostStatus, CreatePostInput, UpdatePostInput } from '../types.js'
+import type Database from 'better-sqlite3'
 
 interface PaginatedResult {
   data: Post[]
@@ -10,43 +11,71 @@ interface PaginatedResult {
 }
 
 interface FindAllOptions {
-  status?: 'draft' | 'published'
+  status?: PostStatus | PostStatus[]
   page?: number
   limit?: number
   search?: string
 }
 
-function getPostTags(postId: number): string[] {
-  const tags = db.prepare(`
-    SELECT t.name FROM tags t
-    JOIN post_tags pt ON pt.tag_id = t.id
-    WHERE pt.post_id = ?
-  `).all(postId) as { name: string }[]
-  return tags.map(t => t.name)
-}
+export class PostRepository {
+  private db: Database.Database
 
-function setPostTags(postId: number, tags: string[]) {
-  db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId)
-  
-  for (const tagName of tags) {
-    let tag = db.prepare('SELECT id FROM tags WHERE name = ?').get(tagName) as { id: number } | undefined
-    if (!tag) {
-      const result = db.prepare('INSERT INTO tags (name) VALUES (?)').run(tagName)
-      tag = { id: result.lastInsertRowid as number }
+  constructor(db?: Database.Database) {
+    this.db = db || defaultDb
+  }
+
+  private getPostTags(postId: number): string[] {
+    try {
+      const tags = this.db.prepare(`
+        SELECT t.name FROM tags t
+        JOIN post_tags pt ON pt.tag_id = t.id
+        WHERE pt.post_id = ?
+      `).all(postId) as { name: string }[]
+      return tags.map(t => t.name)
+    } catch {
+      return []
     }
-    db.prepare('INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)').run(postId, tag.id)
   }
-}
 
-function enrichPost(post: Post): Post {
-  return {
-    ...post,
-    tags: getPostTags(post.id)
+  private setPostTags(postId: number, tags: string[]) {
+    try {
+      this.db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId)
+      
+      for (const tagName of tags) {
+        let tag = this.db.prepare('SELECT id FROM tags WHERE name = ?').get(tagName) as { id: number } | undefined
+        if (!tag) {
+          const result = this.db.prepare('INSERT INTO tags (name) VALUES (?)').run(tagName)
+          tag = { id: result.lastInsertRowid as number }
+        }
+        this.db.prepare('INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)').run(postId, tag.id)
+      }
+    } catch {
+    }
   }
-}
 
-export const postRepository = {
-  findAll(status?: 'draft' | 'published'): Post[] {
+  private enrichPost(post: Post): Post {
+    return {
+      ...post,
+      tags: this.getPostTags(post.id)
+    }
+  }
+
+  private buildStatusClause(alias: string, status?: PostStatus | PostStatus[]): { clause: string; params: (string | number)[] } {
+    if (!status) {
+      return { clause: '1=1', params: [] }
+    }
+    if (Array.isArray(status)) {
+      if (status.length === 0) {
+        return { clause: '1=1', params: [] }
+      }
+      const placeholders = status.map(() => '?').join(', ')
+      return { clause: `${alias}.status IN (${placeholders})`, params: [...status] }
+    }
+    return { clause: `${alias}.status = ?`, params: [status] }
+  }
+
+  findAll(status?: PostStatus | PostStatus[]): Post[] {
+    const { clause, params } = this.buildStatusClause('p', status)
     let query = `
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -54,40 +83,35 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
+      WHERE ${clause}
+      ORDER BY p.created_at DESC
     `
-    if (status) {
-      query += ` WHERE p.status = ?`
-    }
-    query += ` ORDER BY p.created_at DESC`
     
-    const posts = (status 
-      ? db.prepare(query).all(status) 
-      : db.prepare(query).all()) as Post[]
-    return posts.map(enrichPost)
-  },
+    const posts = this.db.prepare(query).all(...params) as Post[]
+    return posts.map(p => this.enrichPost(p))
+  }
 
   findAllPaginated(options: FindAllOptions): PaginatedResult {
     const { status, page = 1, limit = 20, search } = options
     const offset = (page - 1) * limit
     
-    let whereClause = '1=1'
+    const conditions: string[] = ['1=1']
     const params: (string | number)[] = []
     
-    if (status) {
-      whereClause += ' AND p.status = ?'
-      params.push(status)
-    }
+    const { clause: statusClause, params: statusParams } = this.buildStatusClause('p', status)
+    conditions.push(statusClause)
+    params.push(...statusParams)
     
     if (search) {
-      whereClause += ' AND (p.title LIKE ? OR p.excerpt LIKE ?)'
-      params.push(`%${search}%`, `%${search}%`)
+      conditions.push('(p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)')
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`)
     }
     
-    // Get total count
-    const countQuery = `SELECT COUNT(*) as count FROM posts p WHERE ${whereClause}`
-    const { count: total } = db.prepare(countQuery).get(...params) as { count: number }
+    const whereClause = conditions.join(' AND ')
     
-    // Get paginated data
+    const countQuery = `SELECT COUNT(*) as count FROM posts p WHERE ${whereClause}`
+    const { count: total } = this.db.prepare(countQuery).get(...params) as { count: number }
+    
     const dataQuery = `
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -99,96 +123,121 @@ export const postRepository = {
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?
     `
-    const posts = db.prepare(dataQuery).all(...params, limit, offset) as Post[]
+    const posts = this.db.prepare(dataQuery).all(...params, limit, offset) as Post[]
     
     return {
-      data: posts.map(enrichPost),
+      data: posts.map(p => this.enrichPost(p)),
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit)
     }
-  },
+  }
 
-  findById(id: number): Post | undefined {
-    const post = db.prepare(`
+  findById(id: number, status?: PostStatus | PostStatus[]): Post | undefined {
+    const { clause, params } = this.buildStatusClause('p', status)
+    const post = this.db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
         a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE p.id = ?
-    `).get(id) as Post | undefined
-    return post ? enrichPost(post) : undefined
-  },
+      WHERE p.id = ? AND ${clause}
+    `).get(id, ...params) as Post | undefined
+    return post ? this.enrichPost(post) : undefined
+  }
 
-  findBySlug(slug: string): Post | undefined {
-    const post = db.prepare(`
+  findBySlug(slug: string, status?: PostStatus | PostStatus[]): Post | undefined {
+    const { clause, params } = this.buildStatusClause('p', status)
+    const post = this.db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
         a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE p.slug = ?
-    `).get(slug) as Post | undefined
-    return post ? enrichPost(post) : undefined
-  },
+      WHERE p.slug = ? AND ${clause}
+    `).get(slug, ...params) as Post | undefined
+    return post ? this.enrichPost(post) : undefined
+  }
 
-  findByCategory(categorySlug: string): Post[] {
-    const posts = db.prepare(`
+  findPublicBySlug(slug: string): Post | undefined {
+    return this.findBySlug(slug, 'published')
+  }
+
+  findPublicById(id: number): Post | undefined {
+    return this.findById(id, 'published')
+  }
+
+  findByCategory(categorySlug: string, status: PostStatus | PostStatus[] = 'published'): Post[] {
+    const { clause, params } = this.buildStatusClause('p', status)
+    const posts = this.db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
         a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE c.slug = ? AND p.status = 'published'
+      WHERE c.slug = ? AND ${clause}
       ORDER BY p.created_at DESC
-    `).all(categorySlug) as Post[]
-    return posts.map(enrichPost)
-  },
+    `).all(categorySlug, ...params) as Post[]
+    return posts.map(p => this.enrichPost(p))
+  }
 
-  search(query: string): Post[] {
+  findByCategoryId(categoryId: number, status: PostStatus | PostStatus[] = 'published'): Post[] {
+    const { clause, params } = this.buildStatusClause('p', status)
+    const posts = this.db.prepare(`
+      SELECT p.*, 
+        c.name as category, c.slug as category_slug, c.color as category_color,
+        a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
+      FROM posts p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN authors a ON p.author_id = a.id
+      WHERE c.id = ? AND ${clause}
+      ORDER BY p.created_at DESC
+    `).all(categoryId, ...params) as Post[]
+    return posts.map(p => this.enrichPost(p))
+  }
+
+  search(query: string, status: PostStatus | PostStatus[] = 'published'): Post[] {
     const searchTerm = `%${query}%`
-    const posts = db.prepare(`
+    const { clause, params: statusParams } = this.buildStatusClause('p', status)
+    const posts = this.db.prepare(`
       SELECT DISTINCT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
         a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      LEFT JOIN post_tags pt ON pt.post_id = p.id
-      LEFT JOIN tags t ON t.id = pt.tag_id
-      WHERE p.status = 'published' AND (
-        p.title LIKE ? OR p.excerpt LIKE ? OR t.name LIKE ?
+      WHERE ${clause} AND (
+        p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?
       )
       ORDER BY p.created_at DESC
-    `).all(searchTerm, searchTerm, searchTerm) as Post[]
-    return posts.map(enrichPost)
-  },
+    `).all(...statusParams, searchTerm, searchTerm, searchTerm) as Post[]
+    return posts.map(p => this.enrichPost(p))
+  }
 
-  findRelated(postId: number, limit = 3): Post[] {
+  findRelated(postId: number, limit = 3, status: PostStatus = 'published'): Post[] {
     const post = this.findById(postId)
-    if (!post || !post.category_slug) return []
+    if (!post || !post.category_id) return []
     
-    const posts = db.prepare(`
+    const posts = this.db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
         a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE c.slug = ? AND p.id != ? AND p.status = 'published'
+      WHERE p.category_id = ? AND p.id != ? AND p.status = ?
       ORDER BY p.created_at DESC
       LIMIT ?
-    `).all(post.category_slug, postId, limit) as Post[]
-    return posts.map(enrichPost)
-  },
+    `).all(post.category_id, postId, status, limit) as Post[]
+    return posts.map(p => this.enrichPost(p))
+  }
 
   create(input: CreatePostInput): Post {
-    const stmt = db.prepare(`
+    const stmt = this.db.prepare(`
       INSERT INTO posts (title, slug, excerpt, content, image, category_id, author_id, status, read_time)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
@@ -205,10 +254,10 @@ export const postRepository = {
     )
     const postId = result.lastInsertRowid as number
     if (input.tags?.length) {
-      setPostTags(postId, input.tags)
+      this.setPostTags(postId, input.tags)
     }
     return this.findById(postId)!
-  },
+  }
 
   update(id: number, input: UpdatePostInput): Post | undefined {
     const post = this.findById(id)
@@ -229,26 +278,49 @@ export const postRepository = {
 
     if (fields.length > 0) {
       fields.push('updated_at = CURRENT_TIMESTAMP')
-      const stmt = db.prepare(`UPDATE posts SET ${fields.join(', ')} WHERE id = ?`)
+      const stmt = this.db.prepare(`UPDATE posts SET ${fields.join(', ')} WHERE id = ?`)
       stmt.run(...values, id)
     }
 
     if (input.tags !== undefined) {
-      setPostTags(id, input.tags)
+      this.setPostTags(id, input.tags)
     }
     return this.findById(id)
-  },
+  }
+
+  batchUpdateStatus(ids: number[], status: PostStatus): { updated: number } {
+    if (ids.length === 0) return { updated: 0 }
+    const placeholders = ids.map(() => '?').join(', ')
+    const stmt = this.db.prepare(`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`)
+    const result = stmt.run(status, ...ids)
+    return { updated: result.changes }
+  }
 
   delete(id: number): boolean {
-    const result = db.prepare('DELETE FROM posts WHERE id = ?').run(id)
+    const result = this.db.prepare('DELETE FROM posts WHERE id = ?').run(id)
     return result.changes > 0
-  },
+  }
 
-  incrementViews(id: number): void {
-    db.prepare('UPDATE posts SET views = views + 1 WHERE id = ?').run(id)
-  },
+  incrementViews(id: number): boolean {
+    const result = this.db.prepare('UPDATE posts SET views = views + 1 WHERE id = ? AND status = ?').run(id, 'published')
+    return result.changes > 0
+  }
 
-  incrementLikes(id: number): void {
-    db.prepare('UPDATE posts SET likes = likes + 1 WHERE id = ?').run(id)
+  incrementLikes(id: number): boolean {
+    const result = this.db.prepare('UPDATE posts SET likes = likes + 1 WHERE id = ? AND status = ?').run(id, 'published')
+    return result.changes > 0
+  }
+
+  countByStatus(): Record<PostStatus, number> {
+    const rows = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM posts GROUP BY status
+    `).all() as { status: PostStatus; count: number }[]
+    const result: Record<PostStatus, number> = { draft: 0, published: 0, archived: 0 }
+    for (const row of rows) {
+      result[row.status] = row.count
+    }
+    return result
   }
 }
+
+export const postRepository = new PostRepository()
