@@ -93,8 +93,8 @@
               </svg>
               {{ post.views }}
             </span>
-            <span :class="['px-2 py-1 text-xs font-medium rounded', post.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700']">
-              {{ post.status === 'published' ? '已发布' : '草稿' }}
+            <span :class="['px-2 py-1 text-xs font-medium rounded', getStatusBadgeClass(post.status)]">
+              {{ getStatusLabel(post.status) }}
             </span>
           </div>
         </div>
@@ -139,7 +139,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useApi, type Post, type Stats } from '../composables/useApi'
+import { useApi, getStatusLabel, getStatusBadgeClass, type Post, type Stats } from '../composables/useApi'
 
 const { getAllPosts, getStats } = useApi()
 

@@ -14,6 +14,27 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
+        <template v-if="!isNew && post">
+          <span :class="['px-3 py-1 text-sm font-medium rounded', getStatusBadgeClass(form.status)]">
+            {{ getStatusLabel(form.status) }}
+          </span>
+          <button 
+            v-if="form.status === 'published'"
+            @click="handleSave('archived')" 
+            :disabled="saving" 
+            class="px-4 py-2 bg-white text-slate-700 font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            {{ saving ? '处理中...' : '下线文章' }}
+          </button>
+          <button 
+            v-if="form.status === 'archived'"
+            @click="handleSave('published')" 
+            :disabled="saving" 
+            class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {{ saving ? '处理中...' : '恢复发布' }}
+          </button>
+        </template>
         <button @click="handleSave('draft')" :disabled="saving" class="px-4 py-2 bg-white text-slate-700 font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50">
           {{ saving ? '保存中...' : '保存草稿' }}
         </button>
@@ -194,7 +215,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useApi, type Category, type Author } from '../composables/useApi'
+import { useApi, getStatusLabel, getStatusBadgeClass, type PostStatus } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
@@ -207,14 +228,15 @@ const { getPostById, createPost, updatePost, getAllCategories, getAllAuthors, up
 const isNew = computed(() => route.params.id === 'new' || route.params.id === undefined)
 const postId = computed(() => isNew.value ? null : parseInt(route.params.id as string))
 
-const categories = ref<Category[]>([])
-const authors = ref<Author[]>([])
+const categories = ref<any[]>([])
+const authors = ref<any[]>([])
 const tagsInput = ref('')
 const loadingPost = ref(false)
 const saving = ref(false)
 const uploading = ref(false)
 const isDragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const post = ref<any>(null)
 
 const form = ref({
   title: '',
@@ -225,7 +247,7 @@ const form = ref({
   category_id: null as number | null,
   author_id: null as number | null,
   read_time: 5,
-  status: 'draft' as 'draft' | 'published'
+  status: 'draft' as PostStatus
 })
 
 const imagePreview = computed(() => {
@@ -285,8 +307,7 @@ const clearImage = () => {
   }
 }
 
-const handleSave = async (status: 'draft' | 'published') => {
-  // Validate required fields
+const handleSave = async (status: PostStatus) => {
   if (!form.value.title.trim()) {
     showError('请输入文章标题')
     return
@@ -294,16 +315,13 @@ const handleSave = async (status: 'draft' | 'published') => {
 
   const tags = tagsInput.value.split(',').map(t => t.trim()).filter(Boolean)
   
-  // Generate slug from title if empty - use timestamp for Chinese titles
   if (!form.value.slug && form.value.title) {
-    // Remove Chinese characters and special chars, keep only alphanumeric
     let slug = form.value.title
       .toLowerCase()
-      .replace(/[\u4e00-\u9fa5]/g, '') // Remove Chinese characters
+      .replace(/[\u4e00-\u9fa5]/g, '')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
     
-    // If slug is empty (all Chinese title), use timestamp
     if (!slug) {
       slug = `post-${Date.now()}`
     }
@@ -323,24 +341,24 @@ const handleSave = async (status: 'draft' | 'published') => {
     tags
   }
 
-  console.log('Saving post data:', data)
-
   saving.value = true
-  console.log('Starting save...')
   try {
     if (isNew.value) {
-      console.log('Calling createPost...')
-      const result = await createPost(data)
-      console.log('createPost result:', result)
-      showSuccess('文章发布成功')
+      await createPost(data)
+      showSuccess(status === 'published' ? '文章发布成功' : status === 'archived' ? '文章已下线' : '草稿已保存')
     } else if (postId.value) {
       await updatePost(postId.value, data)
-      showSuccess('文章更新成功')
+      if (status === 'archived') {
+        showSuccess('文章已下线')
+      } else if (status === 'published') {
+        showSuccess(form.value.status === 'archived' ? '文章已恢复发布' : '文章更新成功')
+      } else {
+        showSuccess('草稿已保存')
+      }
+      form.value.status = status
     }
-    console.log('Navigating to /posts...')
     router.push('/posts')
   } catch (error) {
-    console.error('Save error:', error)
     showError('保存失败: ' + (error as Error).message)
   } finally {
     saving.value = false
@@ -354,20 +372,21 @@ onMounted(async () => {
     authors.value = await getAllAuthors()
 
     if (!isNew.value && postId.value) {
-      const post = await getPostById(postId.value)
-      if (post) {
+      const fetchedPost = await getPostById(postId.value)
+      if (fetchedPost) {
+        post.value = fetchedPost
         form.value = {
-          title: post.title,
-          slug: post.slug,
-          excerpt: post.excerpt || '',
-          content: post.content || '',
-          image: post.image || '',
-          category_id: post.category_id,
-          author_id: post.author_id,
-          read_time: post.read_time,
-          status: post.status
+          title: fetchedPost.title,
+          slug: fetchedPost.slug,
+          excerpt: fetchedPost.excerpt || '',
+          content: fetchedPost.content || '',
+          image: fetchedPost.image || '',
+          category_id: fetchedPost.category_id,
+          author_id: fetchedPost.author_id,
+          read_time: fetchedPost.read_time,
+          status: fetchedPost.status
         }
-        tagsInput.value = (post.tags || []).join(', ')
+        tagsInput.value = (fetchedPost.tags || []).join(', ')
       }
     }
   } finally {

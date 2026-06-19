@@ -1,5 +1,5 @@
 import { db } from '../db.js'
-import type { Post, CreatePostInput, UpdatePostInput } from '../types.js'
+import type { Post, CreatePostInput, UpdatePostInput, PostStatus } from '../types.js'
 
 interface PaginatedResult {
   data: Post[]
@@ -10,10 +10,12 @@ interface PaginatedResult {
 }
 
 interface FindAllOptions {
-  status?: 'draft' | 'published'
+  status?: PostStatus | PostStatus[]
   page?: number
   limit?: number
   search?: string
+  categoryId?: number
+  categorySlug?: string
 }
 
 function getPostTags(postId: number): string[] {
@@ -45,8 +47,47 @@ function enrichPost(post: Post): Post {
   }
 }
 
+function buildWhereClause(options: FindAllOptions): { where: string; params: (string | number)[] } {
+  const conditions: string[] = []
+  const params: (string | number)[] = []
+
+  if (options.status) {
+    if (Array.isArray(options.status)) {
+      if (options.status.length > 0) {
+        const placeholders = options.status.map(() => '?').join(', ')
+        conditions.push(`p.status IN (${placeholders})`)
+        params.push(...options.status)
+      }
+    } else {
+      conditions.push('p.status = ?')
+      params.push(options.status)
+    }
+  }
+
+  if (options.search) {
+    conditions.push('(p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)')
+    const searchTerm = `%${options.search}%`
+    params.push(searchTerm, searchTerm, searchTerm)
+  }
+
+  if (options.categoryId) {
+    conditions.push('p.category_id = ?')
+    params.push(options.categoryId)
+  }
+
+  if (options.categorySlug) {
+    conditions.push('c.slug = ?')
+    params.push(options.categorySlug)
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  return { where, params }
+}
+
 export const postRepository = {
-  findAll(status?: 'draft' | 'published'): Post[] {
+  // ========== ADMIN METHODS (no status restrictions) ==========
+  
+  findAll(status?: PostStatus): Post[] {
     let query = `
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -67,27 +108,14 @@ export const postRepository = {
   },
 
   findAllPaginated(options: FindAllOptions): PaginatedResult {
-    const { status, page = 1, limit = 20, search } = options
+    const { page = 1, limit = 20 } = options
     const offset = (page - 1) * limit
     
-    let whereClause = '1=1'
-    const params: (string | number)[] = []
+    const { where, params } = buildWhereClause(options)
     
-    if (status) {
-      whereClause += ' AND p.status = ?'
-      params.push(status)
-    }
-    
-    if (search) {
-      whereClause += ' AND (p.title LIKE ? OR p.excerpt LIKE ?)'
-      params.push(`%${search}%`, `%${search}%`)
-    }
-    
-    // Get total count
-    const countQuery = `SELECT COUNT(*) as count FROM posts p WHERE ${whereClause}`
+    const countQuery = `SELECT COUNT(*) as count FROM posts p LEFT JOIN categories c ON p.category_id = c.id ${where}`
     const { count: total } = db.prepare(countQuery).get(...params) as { count: number }
     
-    // Get paginated data
     const dataQuery = `
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -95,7 +123,7 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE ${whereClause}
+      ${where}
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?
     `
@@ -136,7 +164,39 @@ export const postRepository = {
     return post ? enrichPost(post) : undefined
   },
 
-  findByCategory(categorySlug: string): Post[] {
+  // ========== PUBLIC METHODS (only published articles) ==========
+
+  findAllPublic(options: Omit<FindAllOptions, 'status'> = {}): PaginatedResult {
+    return this.findAllPaginated({ ...options, status: 'published' })
+  },
+
+  findPublishedBySlug(slug: string): Post | undefined {
+    const post = db.prepare(`
+      SELECT p.*, 
+        c.name as category, c.slug as category_slug, c.color as category_color,
+        a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
+      FROM posts p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN authors a ON p.author_id = a.id
+      WHERE p.slug = ? AND p.status = 'published'
+    `).get(slug) as Post | undefined
+    return post ? enrichPost(post) : undefined
+  },
+
+  findPublishedById(id: number): Post | undefined {
+    const post = db.prepare(`
+      SELECT p.*, 
+        c.name as category, c.slug as category_slug, c.color as category_color,
+        a.name as author_name, a.avatar as author_avatar, a.bio as author_bio
+      FROM posts p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN authors a ON p.author_id = a.id
+      WHERE p.id = ? AND p.status = 'published'
+    `).get(id) as Post | undefined
+    return post ? enrichPost(post) : undefined
+  },
+
+  findPublishedByCategory(categorySlug: string): Post[] {
     const posts = db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -150,7 +210,7 @@ export const postRepository = {
     return posts.map(enrichPost)
   },
 
-  search(query: string): Post[] {
+  searchPublished(query: string): Post[] {
     const searchTerm = `%${query}%`
     const posts = db.prepare(`
       SELECT DISTINCT p.*, 
@@ -162,15 +222,15 @@ export const postRepository = {
       LEFT JOIN post_tags pt ON pt.post_id = p.id
       LEFT JOIN tags t ON t.id = pt.tag_id
       WHERE p.status = 'published' AND (
-        p.title LIKE ? OR p.excerpt LIKE ? OR t.name LIKE ?
+        p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ? OR t.name LIKE ?
       )
       ORDER BY p.created_at DESC
-    `).all(searchTerm, searchTerm, searchTerm) as Post[]
+    `).all(searchTerm, searchTerm, searchTerm, searchTerm) as Post[]
     return posts.map(enrichPost)
   },
 
-  findRelated(postId: number, limit = 3): Post[] {
-    const post = this.findById(postId)
+  findRelatedPublished(postId: number, limit = 3): Post[] {
+    const post = this.findPublishedById(postId)
     if (!post || !post.category_slug) return []
     
     const posts = db.prepare(`
@@ -186,6 +246,13 @@ export const postRepository = {
     `).all(post.category_slug, postId, limit) as Post[]
     return posts.map(enrichPost)
   },
+
+  getLatestPublished(limit: number = 20): Post[] {
+    const result = this.findAllPublic({ limit })
+    return result.data
+  },
+
+  // ========== WRITE METHODS ==========
 
   create(input: CreatePostInput): Post {
     const stmt = db.prepare(`
@@ -239,16 +306,40 @@ export const postRepository = {
     return this.findById(id)
   },
 
+  bulkUpdateStatus(ids: number[], status: PostStatus): number {
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(', ')
+    const stmt = db.prepare(`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`)
+    const result = stmt.run(status, ...ids)
+    return result.changes
+  },
+
   delete(id: number): boolean {
     const result = db.prepare('DELETE FROM posts WHERE id = ?').run(id)
     return result.changes > 0
   },
 
-  incrementViews(id: number): void {
-    db.prepare('UPDATE posts SET views = views + 1 WHERE id = ?').run(id)
+  incrementViews(id: number): boolean {
+    const result = db.prepare('UPDATE posts SET views = views + 1 WHERE id = ? AND status = ?').run(id, 'published')
+    return result.changes > 0
   },
 
-  incrementLikes(id: number): void {
-    db.prepare('UPDATE posts SET likes = likes + 1 WHERE id = ?').run(id)
+  incrementLikes(id: number): boolean {
+    const result = db.prepare('UPDATE posts SET likes = likes + 1 WHERE id = ? AND status = ?').run(id, 'published')
+    return result.changes > 0
+  },
+
+  getStats(): { total_posts: number; published_posts: number; draft_posts: number; archived_posts: number; total_views: number; total_likes: number; total_categories: number; total_authors: number } {
+    return db.prepare(`
+      SELECT 
+        (SELECT COUNT(*) FROM posts) as total_posts,
+        (SELECT COUNT(*) FROM posts WHERE status = 'published') as published_posts,
+        (SELECT COUNT(*) FROM posts WHERE status = 'draft') as draft_posts,
+        (SELECT COUNT(*) FROM posts WHERE status = 'archived') as archived_posts,
+        (SELECT COALESCE(SUM(views), 0) FROM posts WHERE status = 'published') as total_views,
+        (SELECT COALESCE(SUM(likes), 0) FROM posts WHERE status = 'published') as total_likes,
+        (SELECT COUNT(*) FROM categories) as total_categories,
+        (SELECT COUNT(*) FROM authors) as total_authors
+    `).get() as any
   }
 }

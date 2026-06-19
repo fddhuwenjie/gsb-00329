@@ -1,3 +1,5 @@
+export type PostStatus = 'draft' | 'published' | 'archived'
+
 export interface Post {
   id: number
   slug: string
@@ -7,7 +9,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number
@@ -43,6 +45,7 @@ export interface Stats {
   total_posts: number
   published_posts: number
   draft_posts: number
+  archived_posts: number
   total_views: number
   total_likes: number
   total_categories: number
@@ -57,7 +60,6 @@ export interface PaginatedPosts {
   totalPages: number
 }
 
-// Color mapping for categories
 const categoryColorMap: Record<string, string> = {
   frontend: 'bg-blue-500 text-white',
   css: 'bg-pink-500 text-white',
@@ -81,7 +83,6 @@ function getImageUrl(image: string | null, apiBase: string): string | null {
   if (!image) return null
   if (image.startsWith('http') || image.startsWith('data:')) return image
   if (image.startsWith('/uploads')) {
-    // Remove /api from apiBase to get the server base URL
     const serverBase = apiBase.replace('/api', '')
     return `${serverBase}${image}`
   }
@@ -100,29 +101,25 @@ export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase
 
-  // Posts - use $fetch for fresh data
-  const getAllPosts = async (status?: 'draft' | 'published') => {
+  const getAllPosts = async (status?: PostStatus) => {
     try {
-      const url = status ? `${apiBase}/posts?status=${status}` : `${apiBase}/posts`
-      const response = await $fetch<{ data: Post[] } | Post[]>(url)
-      // Handle both paginated and non-paginated responses
-      const data = Array.isArray(response) ? response : response.data
-      return (data || []).map(p => transformPost(p, apiBase))
+      const url = `${apiBase}/posts/public`
+      const response = await $fetch<PaginatedPosts>(url)
+      return (response.data || []).map(p => transformPost(p, apiBase))
     } catch (e) {
       console.error('Failed to fetch posts:', e)
       return []
     }
   }
 
-  // Posts with pagination
-  const getAllPostsPaginated = async (options?: { status?: 'draft' | 'published', page?: number, limit?: number }) => {
+  const getAllPostsPaginated = async (options?: { page?: number, limit?: number, search?: string }) => {
     try {
       const params = new URLSearchParams()
-      if (options?.status) params.append('status', options.status)
       if (options?.page) params.append('page', options.page.toString())
       if (options?.limit) params.append('limit', options.limit.toString())
+      if (options?.search) params.append('search', options.search)
       const queryString = params.toString()
-      const url = queryString ? `${apiBase}/posts?${queryString}` : `${apiBase}/posts`
+      const url = queryString ? `${apiBase}/posts/public?${queryString}` : `${apiBase}/posts/public`
       const response = await $fetch<PaginatedPosts>(url)
       return {
         ...response,
@@ -136,7 +133,7 @@ export const useApi = () => {
 
   const getPostBySlug = async (slug: string) => {
     try {
-      const data = await $fetch<Post>(`${apiBase}/posts/slug/${slug}`)
+      const data = await $fetch<Post>(`${apiBase}/posts/public/slug/${encodeURIComponent(slug)}`)
       return data ? transformPost(data, apiBase) : null
     } catch (e) {
       console.error('Failed to fetch post:', e)
@@ -146,7 +143,7 @@ export const useApi = () => {
 
   const getPostsByCategory = async (categorySlug: string) => {
     try {
-      const data = await $fetch<Post[]>(`${apiBase}/posts/category/${categorySlug}`)
+      const data = await $fetch<Post[]>(`${apiBase}/posts/public/category/${encodeURIComponent(categorySlug)}`)
       return (data || []).map(p => transformPost(p, apiBase))
     } catch (e) {
       console.error('Failed to fetch posts by category:', e)
@@ -156,7 +153,7 @@ export const useApi = () => {
 
   const searchPosts = async (query: string) => {
     try {
-      const data = await $fetch<Post[]>(`${apiBase}/posts/search?q=${encodeURIComponent(query)}`)
+      const data = await $fetch<Post[]>(`${apiBase}/posts/public/search?q=${encodeURIComponent(query)}`)
       return (data || []).map(p => transformPost(p, apiBase))
     } catch (e) {
       console.error('Failed to search posts:', e)
@@ -166,7 +163,7 @@ export const useApi = () => {
 
   const getRelatedPosts = async (postId: number, limit = 3) => {
     try {
-      const data = await $fetch<Post[]>(`${apiBase}/posts/${postId}/related?limit=${limit}`)
+      const data = await $fetch<Post[]>(`${apiBase}/posts/public/${postId}/related?limit=${limit}`)
       return (data || []).map(p => transformPost(p, apiBase))
     } catch (e) {
       console.error('Failed to fetch related posts:', e)
@@ -176,15 +173,17 @@ export const useApi = () => {
 
   const incrementViews = async (postId: number) => {
     try {
-      await $fetch(`${apiBase}/posts/${postId}/view`, { method: 'POST' })
+      await $fetch(`${apiBase}/posts/public/${postId}/view`, { method: 'POST' })
+      return true
     } catch (e) {
       console.error('Failed to increment views:', e)
+      return false
     }
   }
 
   const incrementLikes = async (postId: number) => {
     try {
-      await $fetch(`${apiBase}/posts/${postId}/like`, { method: 'POST' })
+      await $fetch(`${apiBase}/posts/public/${postId}/like`, { method: 'POST' })
       return true
     } catch (e) {
       console.error('Failed to increment likes:', e)
@@ -192,7 +191,6 @@ export const useApi = () => {
     }
   }
 
-  // Categories - use $fetch for fresh data
   const getAllCategories = async () => {
     try {
       const data = await $fetch<Category[]>(`${apiBase}/categories`)
@@ -205,7 +203,7 @@ export const useApi = () => {
 
   const getCategoryBySlug = async (slug: string) => {
     try {
-      const data = await $fetch<Category>(`${apiBase}/categories/slug/${slug}`)
+      const data = await $fetch<Category>(`${apiBase}/categories/slug/${encodeURIComponent(slug)}`)
       return data
     } catch (e) {
       console.error('Failed to fetch category:', e)
@@ -213,7 +211,6 @@ export const useApi = () => {
     }
   }
 
-  // Stats
   const getStats = async () => {
     try {
       const data = await $fetch<Stats>(`${apiBase}/stats`)
