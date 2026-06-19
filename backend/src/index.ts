@@ -24,77 +24,83 @@ if (!existsSync(dataDir)) {
 // Initialize database
 initDatabase()
 
-const app = express()
-const PORT = process.env.PORT || 3001
+export function createApp() {
+  const app = express()
 
-// Security middleware
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-  contentSecurityPolicy: false
-}))
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: false
+  }))
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: { error: 'Too many requests, please try again later' },
-  standardHeaders: true,
-  legacyHeaders: false
-})
+  // 测试环境关掉限流，避免 supertest 串行打多次请求时被 429。
+  if (process.env.NODE_ENV !== 'test') {
+    const limiter = rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 100,
+      message: { error: 'Too many requests, please try again later' },
+      standardHeaders: true,
+      legacyHeaders: false
+    })
+    app.use('/api', limiter)
+  }
 
-const uploadLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // limit uploads to 10 per minute
-  message: { error: 'Too many uploads, please try again later' }
-})
+  const uploadLimiter = process.env.NODE_ENV === 'test'
+    ? (_: express.Request, __: express.Response, next: express.NextFunction) => next()
+    : rateLimit({
+        windowMs: 60 * 1000,
+        max: 10,
+        message: { error: 'Too many uploads, please try again later' }
+      })
 
-// Middleware
-app.use(cors())
-app.use(express.json({ limit: '10mb' }))
-app.use('/api', limiter)
+  app.use(cors())
+  app.use(express.json({ limit: '10mb' }))
 
-// Request logging
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`)
-  next()
-})
+  if (process.env.NODE_ENV !== 'test') {
+    app.use((req, _res, next) => {
+      console.log(`${new Date().toISOString()} ${req.method} ${req.url}`)
+      next()
+    })
+  }
 
-// Static files for uploads
-app.use('/uploads', express.static(join(__dirname, '..', 'data', 'uploads')))
+  app.use('/uploads', express.static(join(__dirname, '..', 'data', 'uploads')))
 
-// Routes
-app.use('/api/posts', postsRouter)
-app.use('/api/categories', categoriesRouter)
-app.use('/api/authors', authorsRouter)
-app.use('/api/upload', uploadLimiter, uploadRouter)
-app.use('/rss', rssRouter)
+  app.use('/api/posts', postsRouter)
+  app.use('/api/categories', categoriesRouter)
+  app.use('/api/authors', authorsRouter)
+  app.use('/api/upload', uploadLimiter, uploadRouter)
+  app.use('/rss', rssRouter)
 
-// Stats endpoint
-app.get('/api/stats', (req, res) => {
-  const stats = db.prepare(`
-    SELECT 
-      (SELECT COUNT(*) FROM posts) as total_posts,
-      (SELECT COUNT(*) FROM posts WHERE status = 'published') as published_posts,
-      (SELECT COUNT(*) FROM posts WHERE status = 'draft') as draft_posts,
-      (SELECT COALESCE(SUM(views), 0) FROM posts) as total_views,
-      (SELECT COALESCE(SUM(likes), 0) FROM posts) as total_likes,
-      (SELECT COUNT(*) FROM categories) as total_categories,
-      (SELECT COUNT(*) FROM authors) as total_authors
-  `).get()
-  res.json(stats)
-})
+  app.get('/api/stats', (_req, res) => {
+    const stats = db.prepare(`
+      SELECT 
+        (SELECT COUNT(*) FROM posts) as total_posts,
+        (SELECT COUNT(*) FROM posts WHERE status = 'published') as published_posts,
+        (SELECT COUNT(*) FROM posts WHERE status = 'draft') as draft_posts,
+        (SELECT COUNT(*) FROM posts WHERE status = 'archived') as archived_posts,
+        (SELECT COALESCE(SUM(views), 0) FROM posts) as total_views,
+        (SELECT COALESCE(SUM(likes), 0) FROM posts) as total_likes,
+        (SELECT COUNT(*) FROM categories) as total_categories,
+        (SELECT COUNT(*) FROM authors) as total_authors
+    `).get()
+    res.json(stats)
+  })
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
-})
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  })
 
-// Error handler
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(err.stack)
-  res.status(500).json({ error: 'Internal server error' })
-})
+  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error(err.stack)
+    res.status(500).json({ error: 'Internal server error' })
+  })
 
-app.listen(PORT, () => {
-  console.log(`Backend server running on http://localhost:${PORT}`)
-})
+  return app
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  const app = createApp()
+  const PORT = process.env.PORT || 3001
+  app.listen(PORT, () => {
+    console.log(`Backend server running on http://localhost:${PORT}`)
+  })
+}

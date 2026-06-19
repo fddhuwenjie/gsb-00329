@@ -1,5 +1,12 @@
 import { db } from '../db.js'
-import type { Post, CreatePostInput, UpdatePostInput } from '../types.js'
+import {
+  PUBLIC_POST_STATUSES,
+  POST_STATUSES,
+  type Post,
+  type PostStatus,
+  type CreatePostInput,
+  type UpdatePostInput,
+} from '../types.js'
 
 interface PaginatedResult {
   data: Post[]
@@ -10,7 +17,10 @@ interface PaginatedResult {
 }
 
 interface FindAllOptions {
-  status?: 'draft' | 'published'
+  status?: PostStatus
+  // 公共入口（前台/RSS/搜索/分类聚合）必须把 statuses 限定到 published。
+  // 管理端默认会传 includeAll=true 以拿到 draft/published/archived。
+  statuses?: PostStatus[]
   page?: number
   limit?: number
   search?: string
@@ -45,8 +55,31 @@ function enrichPost(post: Post): Post {
   }
 }
 
+function buildStatusClause(statuses: PostStatus[] | undefined): { clause: string; params: PostStatus[] } {
+  if (!statuses || statuses.length === 0) {
+    return { clause: '', params: [] }
+  }
+  const placeholders = statuses.map(() => '?').join(', ')
+  return {
+    clause: `p.status IN (${placeholders})`,
+    params: statuses,
+  }
+}
+
+function normalizeStatuses(options: FindAllOptions): PostStatus[] | undefined {
+  if (options.statuses && options.statuses.length > 0) {
+    // 仅保留合法状态，避免外部直接拼 SQL
+    return options.statuses.filter((s): s is PostStatus => POST_STATUSES.includes(s))
+  }
+  if (options.status) {
+    return [options.status]
+  }
+  return undefined
+}
+
 export const postRepository = {
-  findAll(status?: 'draft' | 'published'): Post[] {
+  // 内部全集查询（管理端 / 测试 / 后台编辑用）
+  findAll(status?: PostStatus): Post[] {
     let query = `
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -67,27 +100,29 @@ export const postRepository = {
   },
 
   findAllPaginated(options: FindAllOptions): PaginatedResult {
-    const { status, page = 1, limit = 20, search } = options
+    const { page = 1, limit = 20, search } = options
+    const statuses = normalizeStatuses(options)
     const offset = (page - 1) * limit
-    
-    let whereClause = '1=1'
+
+    const whereParts: string[] = []
     const params: (string | number)[] = []
-    
-    if (status) {
-      whereClause += ' AND p.status = ?'
-      params.push(status)
+
+    const { clause, params: statusParams } = buildStatusClause(statuses)
+    if (clause) {
+      whereParts.push(clause)
+      params.push(...statusParams)
     }
-    
+
     if (search) {
-      whereClause += ' AND (p.title LIKE ? OR p.excerpt LIKE ?)'
+      whereParts.push('(p.title LIKE ? OR p.excerpt LIKE ?)')
       params.push(`%${search}%`, `%${search}%`)
     }
-    
-    // Get total count
-    const countQuery = `SELECT COUNT(*) as count FROM posts p WHERE ${whereClause}`
+
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : ''
+
+    const countQuery = `SELECT COUNT(*) as count FROM posts p ${whereClause}`
     const { count: total } = db.prepare(countQuery).get(...params) as { count: number }
-    
-    // Get paginated data
+
     const dataQuery = `
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -95,22 +130,24 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE ${whereClause}
+      ${whereClause}
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?
     `
     const posts = db.prepare(dataQuery).all(...params, limit, offset) as Post[]
-    
+
     return {
       data: posts.map(enrichPost),
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit) || 0,
     }
   },
 
-  findById(id: number): Post | undefined {
+  findById(id: number, statuses?: PostStatus[]): Post | undefined {
+    const { clause, params } = buildStatusClause(statuses)
+    const where = clause ? ` AND ${clause}` : ''
     const post = db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -118,12 +155,14 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE p.id = ?
-    `).get(id) as Post | undefined
+      WHERE p.id = ?${where}
+    `).get(id, ...params) as Post | undefined
     return post ? enrichPost(post) : undefined
   },
 
-  findBySlug(slug: string): Post | undefined {
+  findBySlug(slug: string, statuses?: PostStatus[]): Post | undefined {
+    const { clause, params } = buildStatusClause(statuses)
+    const where = clause ? ` AND ${clause}` : ''
     const post = db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -131,12 +170,14 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE p.slug = ?
-    `).get(slug) as Post | undefined
+      WHERE p.slug = ?${where}
+    `).get(slug, ...params) as Post | undefined
     return post ? enrichPost(post) : undefined
   },
 
-  findByCategory(categorySlug: string): Post[] {
+  findByCategory(categorySlug: string, statuses: PostStatus[] = PUBLIC_POST_STATUSES): Post[] {
+    const { clause, params } = buildStatusClause(statuses)
+    const where = clause ? ` AND ${clause}` : ''
     const posts = db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -144,14 +185,16 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE c.slug = ? AND p.status = 'published'
+      WHERE c.slug = ?${where}
       ORDER BY p.created_at DESC
-    `).all(categorySlug) as Post[]
+    `).all(categorySlug, ...params) as Post[]
     return posts.map(enrichPost)
   },
 
-  search(query: string): Post[] {
+  search(query: string, statuses: PostStatus[] = PUBLIC_POST_STATUSES): Post[] {
     const searchTerm = `%${query}%`
+    const { clause, params } = buildStatusClause(statuses)
+    const where = clause ? ` AND ${clause}` : ''
     const posts = db.prepare(`
       SELECT DISTINCT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -161,18 +204,19 @@ export const postRepository = {
       LEFT JOIN authors a ON p.author_id = a.id
       LEFT JOIN post_tags pt ON pt.post_id = p.id
       LEFT JOIN tags t ON t.id = pt.tag_id
-      WHERE p.status = 'published' AND (
-        p.title LIKE ? OR p.excerpt LIKE ? OR t.name LIKE ?
-      )
+      WHERE (p.title LIKE ? OR p.excerpt LIKE ? OR t.name LIKE ?)${where}
       ORDER BY p.created_at DESC
-    `).all(searchTerm, searchTerm, searchTerm) as Post[]
+    `).all(searchTerm, searchTerm, searchTerm, ...params) as Post[]
     return posts.map(enrichPost)
   },
 
-  findRelated(postId: number, limit = 3): Post[] {
-    const post = this.findById(postId)
+  findRelated(postId: number, limit = 3, statuses: PostStatus[] = PUBLIC_POST_STATUSES): Post[] {
+    // 主文章本身必须先满足公开状态，否则相关推荐也不应该出现在前台。
+    const post = this.findById(postId, statuses)
     if (!post || !post.category_slug) return []
-    
+
+    const { clause, params } = buildStatusClause(statuses)
+    const where = clause ? ` AND ${clause}` : ''
     const posts = db.prepare(`
       SELECT p.*, 
         c.name as category, c.slug as category_slug, c.color as category_color,
@@ -180,10 +224,10 @@ export const postRepository = {
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN authors a ON p.author_id = a.id
-      WHERE c.slug = ? AND p.id != ? AND p.status = 'published'
+      WHERE c.slug = ? AND p.id != ?${where}
       ORDER BY p.created_at DESC
       LIMIT ?
-    `).all(post.category_slug, postId, limit) as Post[]
+    `).all(post.category_slug, postId, ...params, limit) as Post[]
     return posts.map(enrichPost)
   },
 
@@ -239,16 +283,58 @@ export const postRepository = {
     return this.findById(id)
   },
 
+  // 批量切换状态：用于「批量下线」「批量恢复」「批量发布」等管理后台流程。
+  // 通过事务一次性更新，避免分次写入造成「一半已下线、一半还可见」的中间态。
+  bulkUpdateStatus(ids: number[], status: PostStatus): number {
+    if (!ids.length) return 0
+    if (!POST_STATUSES.includes(status)) {
+      throw new Error(`Invalid status: ${status}`)
+    }
+    const placeholders = ids.map(() => '?').join(', ')
+    const stmt = db.prepare(
+      `UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`
+    )
+    const txn = db.transaction((targetIds: number[]) => {
+      const result = stmt.run(status, ...targetIds)
+      return result.changes
+    })
+    return txn(ids) as number
+  },
+
   delete(id: number): boolean {
     const result = db.prepare('DELETE FROM posts WHERE id = ?').run(id)
     return result.changes > 0
   },
 
-  incrementViews(id: number): void {
-    db.prepare('UPDATE posts SET views = views + 1 WHERE id = ?').run(id)
+  incrementViews(id: number, statuses: PostStatus[] = PUBLIC_POST_STATUSES): boolean {
+    // 浏览量只能在 published 文章上累加，避免「下线后仍被外部直链刷量」。
+    // 注意 UPDATE 没有表别名，这里需要直接用列名 status，而不是 p.status。
+    const cleanStatuses = statuses?.length ? statuses : []
+    if (!cleanStatuses.length) {
+      const result = db
+        .prepare(`UPDATE posts SET views = views + 1 WHERE id = ?`)
+        .run(id)
+      return result.changes > 0
+    }
+    const placeholders = cleanStatuses.map(() => '?').join(', ')
+    const result = db
+      .prepare(`UPDATE posts SET views = views + 1 WHERE id = ? AND status IN (${placeholders})`)
+      .run(id, ...cleanStatuses)
+    return result.changes > 0
   },
 
-  incrementLikes(id: number): void {
-    db.prepare('UPDATE posts SET likes = likes + 1 WHERE id = ?').run(id)
-  }
+  incrementLikes(id: number, statuses: PostStatus[] = PUBLIC_POST_STATUSES): boolean {
+    const cleanStatuses = statuses?.length ? statuses : []
+    if (!cleanStatuses.length) {
+      const result = db
+        .prepare(`UPDATE posts SET likes = likes + 1 WHERE id = ?`)
+        .run(id)
+      return result.changes > 0
+    }
+    const placeholders = cleanStatuses.map(() => '?').join(', ')
+    const result = db
+      .prepare(`UPDATE posts SET likes = likes + 1 WHERE id = ? AND status IN (${placeholders})`)
+      .run(id, ...cleanStatuses)
+    return result.changes > 0
+  },
 }

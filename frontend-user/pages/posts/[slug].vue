@@ -119,11 +119,17 @@ const { getPostBySlug, getRelatedPosts, incrementViews, incrementLikes, formatDa
 
 const slug = route.params.slug as string
 const postData = await getPostBySlug(slug)
+// 后端会在文章为草稿/下线/不存在时返回 404，这里把 null 直接转化为 SSR 级 404，
+// 避免「拿到旧链接还能渲染半个页面」或者搜索引擎抓到下线文章的快照。
+if (!postData) {
+  throw createError({ statusCode: 404, statusMessage: 'Post not found', fatal: true })
+}
 const post = ref<Post | null>(postData)
 const relatedPosts = post.value ? await getRelatedPosts(post.value.id, 3) : []
 
-// Increment views on page load
-if (post.value) {
+// Increment views on page load —— 仅当确实是 published 文章才会成功，
+// 后端对下线/草稿文章会返回 404，这里我们 swallow，不会回写到 UI。
+if (post.value && post.value.status === 'published') {
   incrementViews(post.value.id)
 }
 
