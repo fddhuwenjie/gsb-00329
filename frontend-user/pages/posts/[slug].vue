@@ -119,13 +119,20 @@ const { getPostBySlug, getRelatedPosts, incrementViews, incrementLikes, formatDa
 
 const slug = route.params.slug as string
 const postData = await getPostBySlug(slug)
-const post = ref<Post | null>(postData)
-const relatedPosts = post.value ? await getRelatedPosts(post.value.id, 3) : []
+
+if (!postData) {
+  throw createError({
+    statusCode: 404,
+    statusMessage: '文章不存在或已下线',
+    fatal: true
+  })
+}
+
+const post = ref<Post>(postData)
+const relatedPosts = await getRelatedPosts(post.value.id, 3)
 
 // Increment views on page load
-if (post.value) {
-  incrementViews(post.value.id)
-}
+incrementViews(post.value.id)
 
 // SEO
 useHead({

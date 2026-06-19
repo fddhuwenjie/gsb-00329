@@ -230,7 +230,7 @@ onMounted(async () => {
   loading.value = true
   try {
     const [postsData, categoriesData] = await Promise.all([
-      getAllPosts('published'),
+      getAllPosts(),
       getAllCategories()
     ])
     posts.value = postsData

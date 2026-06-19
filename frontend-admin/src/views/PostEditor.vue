@@ -13,12 +13,29 @@
           <p class="text-slate-600 mt-1">{{ isNew ? '创建一篇新的博客文章' : '修改文章内容' }}</p>
         </div>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3" v-if="isNew">
         <button @click="handleSave('draft')" :disabled="saving" class="px-4 py-2 bg-white text-slate-700 font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50">
           {{ saving ? '保存中...' : '保存草稿' }}
         </button>
         <button @click="handleSave('published')" :disabled="saving" class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
           {{ saving ? '保存中...' : '发布文章' }}
+        </button>
+      </div>
+      <div class="flex items-center gap-3" v-else>
+        <span v-if="form.status" :class="['px-3 py-1 text-sm font-medium rounded', getStatusClass(form.status)]">
+          当前状态: {{ getStatusLabel(form.status) }}
+        </span>
+        <button @click="handleSave('draft')" :disabled="saving" class="px-4 py-2 bg-white text-slate-700 font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50">
+          {{ saving ? '保存中...' : '保存草稿' }}
+        </button>
+        <button v-if="form.status !== 'published'" @click="handleSave('published')" :disabled="saving" class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
+          {{ saving ? '保存中...' : '发布文章' }}
+        </button>
+        <button v-if="form.status === 'published'" @click="handleSave('archived')" :disabled="saving" class="px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50">
+          {{ saving ? '保存中...' : '下线文章' }}
+        </button>
+        <button v-if="form.status === 'archived'" @click="handleSave('published')" :disabled="saving" class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
+          {{ saving ? '保存中...' : '重新发布' }}
         </button>
       </div>
     </div>
@@ -194,7 +211,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useApi, type Category, type Author } from '../composables/useApi'
+import { useApi, type Category, type Author, type PostStatus } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
@@ -225,8 +242,24 @@ const form = ref({
   category_id: null as number | null,
   author_id: null as number | null,
   read_time: 5,
-  status: 'draft' as 'draft' | 'published'
+  status: 'draft' as PostStatus
 })
+
+const getStatusLabel = (status: PostStatus) => {
+  switch (status) {
+    case 'published': return '已发布'
+    case 'draft': return '草稿'
+    case 'archived': return '已下线'
+  }
+}
+
+const getStatusClass = (status: PostStatus) => {
+  switch (status) {
+    case 'published': return 'bg-emerald-100 text-emerald-700'
+    case 'draft': return 'bg-slate-100 text-slate-700'
+    case 'archived': return 'bg-amber-100 text-amber-700'
+  }
+}
 
 const imagePreview = computed(() => {
   if (!form.value.image) return ''
@@ -285,7 +318,7 @@ const clearImage = () => {
   }
 }
 
-const handleSave = async (status: 'draft' | 'published') => {
+const handleSave = async (status: PostStatus) => {
   // Validate required fields
   if (!form.value.title.trim()) {
     showError('请输入文章标题')
