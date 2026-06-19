@@ -17,7 +17,10 @@
         <button @click="handleSave('draft')" :disabled="saving" class="px-4 py-2 bg-white text-slate-700 font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50">
           {{ saving ? '保存中...' : '保存草稿' }}
         </button>
-        <button @click="handleSave('published')" :disabled="saving" class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
+        <button v-if="!isNew && form.status === 'published'" @click="handleSave('offline')" :disabled="saving" class="px-4 py-2 bg-orange-600 text-white font-medium rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50">
+          {{ saving ? '保存中...' : '下线文章' }}
+        </button>
+        <button v-else @click="handleSave('published')" :disabled="saving" class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
           {{ saving ? '保存中...' : '发布文章' }}
         </button>
       </div>
@@ -194,7 +197,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useApi, type Category, type Author } from '../composables/useApi'
+import { useApi, type Category, type Author, type PostStatus } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
@@ -225,7 +228,7 @@ const form = ref({
   category_id: null as number | null,
   author_id: null as number | null,
   read_time: 5,
-  status: 'draft' as 'draft' | 'published'
+  status: 'draft' as PostStatus
 })
 
 const imagePreview = computed(() => {
@@ -285,7 +288,7 @@ const clearImage = () => {
   }
 }
 
-const handleSave = async (status: 'draft' | 'published') => {
+const handleSave = async (status: PostStatus) => {
   // Validate required fields
   if (!form.value.title.trim()) {
     showError('请输入文章标题')

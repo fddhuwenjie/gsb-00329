@@ -69,15 +69,14 @@ app.use('/api/authors', authorsRouter)
 app.use('/api/upload', uploadLimiter, uploadRouter)
 app.use('/rss', rssRouter)
 
-// Stats endpoint
+// Public stats endpoint - only returns published post counts to avoid leaking draft/offline info
 app.get('/api/stats', (req, res) => {
   const stats = db.prepare(`
     SELECT 
-      (SELECT COUNT(*) FROM posts) as total_posts,
+      (SELECT COUNT(*) FROM posts WHERE status = 'published') as total_posts,
       (SELECT COUNT(*) FROM posts WHERE status = 'published') as published_posts,
-      (SELECT COUNT(*) FROM posts WHERE status = 'draft') as draft_posts,
-      (SELECT COALESCE(SUM(views), 0) FROM posts) as total_views,
-      (SELECT COALESCE(SUM(likes), 0) FROM posts) as total_likes,
+      (SELECT COALESCE(SUM(views), 0) FROM posts WHERE status = 'published') as total_views,
+      (SELECT COALESCE(SUM(likes), 0) FROM posts WHERE status = 'published') as total_likes,
       (SELECT COUNT(*) FROM categories) as total_categories,
       (SELECT COUNT(*) FROM authors) as total_authors
   `).get()

@@ -30,7 +30,7 @@
           />
         </div>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap">
         <button
           v-for="filter in filters"
           :key="filter.value"
@@ -38,6 +38,25 @@
           :class="['px-4 py-2 text-sm font-medium rounded-lg transition-colors', currentFilter === filter.value ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50']"
         >
           {{ filter.label }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Bulk Actions -->
+    <div v-if="selectedIds.length > 0" class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-center justify-between">
+      <span class="text-emerald-800 font-medium">已选择 {{ selectedIds.length }} 篇文章</span>
+      <div class="flex gap-2">
+        <button @click="bulkUpdateStatus('published')" class="px-3 py-1.5 bg-emerald-600 text-white text-sm font-medium rounded hover:bg-emerald-700 transition-colors">
+          批量发布
+        </button>
+        <button @click="bulkUpdateStatus('offline')" class="px-3 py-1.5 bg-orange-600 text-white text-sm font-medium rounded hover:bg-orange-700 transition-colors">
+          批量下线
+        </button>
+        <button @click="bulkUpdateStatus('draft')" class="px-3 py-1.5 bg-slate-600 text-white text-sm font-medium rounded hover:bg-slate-700 transition-colors">
+          批量转草稿
+        </button>
+        <button @click="clearSelection" class="px-3 py-1.5 bg-white text-slate-600 text-sm font-medium rounded border border-slate-200 hover:bg-slate-50 transition-colors">
+          取消选择
         </button>
       </div>
     </div>
@@ -52,6 +71,9 @@
       <table class="w-full">
         <thead class="bg-slate-50 border-b border-slate-200">
           <tr>
+            <th class="text-left px-4 py-4 text-sm font-semibold text-slate-900 w-10">
+              <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" class="rounded border-slate-300" />
+            </th>
             <th class="text-left px-6 py-4 text-sm font-semibold text-slate-900">文章</th>
             <th class="text-left px-6 py-4 text-sm font-semibold text-slate-900">分类</th>
             <th class="text-left px-6 py-4 text-sm font-semibold text-slate-900">状态</th>
@@ -62,6 +84,9 @@
         </thead>
         <tbody class="divide-y divide-slate-200">
           <tr v-for="post in posts" :key="post.id" class="hover:bg-slate-50">
+            <td class="px-4 py-4">
+              <input type="checkbox" :checked="selectedIds.includes(post.id)" @change="toggleSelect(post.id)" class="rounded border-slate-300" />
+            </td>
             <td class="px-6 py-4">
               <div class="flex items-center gap-4">
                 <div class="w-12 h-12 bg-slate-100 rounded-lg overflow-hidden flex-shrink-0">
@@ -75,6 +100,7 @@
                 <div class="min-w-0">
                   <h3 class="font-semibold text-slate-900 truncate max-w-xs">{{ post.title }}</h3>
                   <p class="text-sm text-slate-500 truncate max-w-xs">{{ post.excerpt || '暂无摘要' }}</p>
+                  <p class="text-xs text-slate-400 mt-1">/{{ post.slug }}</p>
                 </div>
               </div>
             </td>
@@ -82,8 +108,8 @@
               <span class="text-sm text-slate-600">{{ post.category || '-' }}</span>
             </td>
             <td class="px-6 py-4">
-              <span :class="['px-2 py-1 text-xs font-medium rounded', post.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700']">
-                {{ post.status === 'published' ? '已发布' : '草稿' }}
+              <span :class="['px-2 py-1 text-xs font-medium rounded', getStatusClass(post.status)]">
+                {{ getStatusLabel(post.status) }}
               </span>
             </td>
             <td class="px-6 py-4">
@@ -93,13 +119,23 @@
               <span class="text-sm text-slate-600">{{ formatDate(post.created_at) }}</span>
             </td>
             <td class="px-6 py-4 text-right">
-              <div class="flex items-center justify-end gap-2">
-                <router-link :to="`/posts/${post.id}`" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+              <div class="flex items-center justify-end gap-1">
+                <router-link :to="`/posts/${post.id}`" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="编辑">
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
                 </router-link>
-                <button @click="handleDelete(post.id)" class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                <button v-if="post.status === 'published'" @click="handleStatusChange(post.id, 'offline')" class="p-2 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors" title="下线">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                </button>
+                <button v-else @click="handleStatusChange(post.id, 'published')" class="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="发布">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                </button>
+                <button @click="handleDelete(post.id)" class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="删除">
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
@@ -108,7 +144,7 @@
             </td>
           </tr>
           <tr v-if="posts.length === 0">
-            <td colspan="6" class="px-6 py-12 text-center text-slate-500">
+            <td colspan="7" class="px-6 py-12 text-center text-slate-500">
               {{ searchQuery ? '未找到匹配的文章' : '暂无文章' }}
             </td>
           </tr>
@@ -163,30 +199,34 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useApi, type Post } from '../composables/useApi'
+import { useApi, type Post, type PostStatus } from '../composables/useApi'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import { useToast } from '../composables/useToast'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
 
-const { getAllPosts, deletePost, loading } = useApi()
+const { getAllPosts, deletePost, updatePostStatus, bulkUpdatePostsStatus, loading } = useApi()
+const { showSuccess, showError } = useToast()
 
 const showDeleteModal = ref(false)
 const deleteTargetId = ref<number | null>(null)
 
 const posts = ref<Post[]>([])
-const currentFilter = ref<'all' | 'published' | 'draft'>('all')
+const currentFilter = ref<'all' | PostStatus>('all')
 const searchQuery = ref('')
 const currentPage = ref(1)
 const total = ref(0)
 const totalPages = ref(0)
-const limit = 5
+const limit = 10
+const selectedIds = ref<number[]>([])
 
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
 
-const filters = [
-  { label: '全部', value: 'all' as const },
-  { label: '已发布', value: 'published' as const },
-  { label: '草稿', value: 'draft' as const }
+const filters: { label: string, value: 'all' | PostStatus }[] = [
+  { label: '全部', value: 'all' },
+  { label: '已发布', value: 'published' },
+  { label: '草稿', value: 'draft' },
+  { label: '已下线', value: 'offline' }
 ]
 
 const visiblePages = computed(() => {
@@ -208,10 +248,32 @@ const visiblePages = computed(() => {
   return pages
 })
 
+const allSelected = computed(() => {
+  return posts.value.length > 0 && posts.value.every(p => selectedIds.value.includes(p.id))
+})
+
 const getImageUrl = (image: string) => {
   if (image.startsWith('http') || image.startsWith('data:')) return image
   if (image.startsWith('/uploads')) return `${API_BASE.replace('/api', '')}${image}`
   return image
+}
+
+const getStatusLabel = (status: PostStatus) => {
+  const labels: Record<PostStatus, string> = {
+    published: '已发布',
+    draft: '草稿',
+    offline: '已下线'
+  }
+  return labels[status]
+}
+
+const getStatusClass = (status: PostStatus) => {
+  const classes: Record<PostStatus, string> = {
+    published: 'bg-emerald-100 text-emerald-700',
+    draft: 'bg-slate-100 text-slate-700',
+    offline: 'bg-orange-100 text-orange-700'
+  }
+  return classes[status]
 }
 
 const formatDate = (dateStr: string) => {
@@ -230,6 +292,7 @@ const fetchPosts = async () => {
   posts.value = result.data
   total.value = result.total
   totalPages.value = result.totalPages
+  selectedIds.value = []
 }
 
 const debouncedSearch = () => {
@@ -240,7 +303,7 @@ const debouncedSearch = () => {
   }, 300)
 }
 
-const handleFilterChange = (filter: 'all' | 'published' | 'draft') => {
+const handleFilterChange = (filter: 'all' | PostStatus) => {
   currentFilter.value = filter
   currentPage.value = 1
   fetchPosts()
@@ -252,6 +315,57 @@ const handlePageChange = (page: number) => {
   fetchPosts()
 }
 
+const handleStatusChange = async (id: number, status: PostStatus) => {
+  try {
+    await updatePostStatus(id, status)
+    const labels: Record<PostStatus, string> = {
+      published: '发布',
+      draft: '转为草稿',
+      offline: '下线'
+    }
+    showSuccess(`文章已${labels[status]}`)
+    fetchPosts()
+  } catch (e) {
+    showError('操作失败: ' + (e as Error).message)
+  }
+}
+
+const bulkUpdateStatus = async (status: PostStatus) => {
+  try {
+    const result = await bulkUpdatePostsStatus(selectedIds.value, status)
+    const labels: Record<PostStatus, string> = {
+      published: '发布',
+      draft: '转为草稿',
+      offline: '下线'
+    }
+    showSuccess(`已批量${labels[status]} ${result.updated} 篇文章`)
+    fetchPosts()
+  } catch (e) {
+    showError('批量操作失败: ' + (e as Error).message)
+  }
+}
+
+const toggleSelect = (id: number) => {
+  const idx = selectedIds.value.indexOf(id)
+  if (idx === -1) {
+    selectedIds.value.push(id)
+  } else {
+    selectedIds.value.splice(idx, 1)
+  }
+}
+
+const toggleSelectAll = () => {
+  if (allSelected.value) {
+    selectedIds.value = []
+  } else {
+    selectedIds.value = posts.value.map(p => p.id)
+  }
+}
+
+const clearSelection = () => {
+  selectedIds.value = []
+}
+
 const handleDelete = async (id: number) => {
   deleteTargetId.value = id
   showDeleteModal.value = true
@@ -261,7 +375,10 @@ const confirmDelete = async () => {
   if (deleteTargetId.value) {
     const success = await deletePost(deleteTargetId.value)
     if (success) {
+      showSuccess('文章已删除')
       fetchPosts()
+    } else {
+      showError('删除失败')
     }
   }
   showDeleteModal.value = false

@@ -1,6 +1,6 @@
 <template>
   <div>
-    <article v-if="post" class="max-w-4xl mx-auto px-6 py-12">
+    <article class="max-w-4xl mx-auto px-6 py-12">
       <!-- Back Link -->
       <NuxtLink to="/" class="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors mb-8">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -100,14 +100,6 @@
       </section>
     </article>
 
-    <!-- 404 -->
-    <div v-else class="max-w-4xl mx-auto px-6 py-24 text-center">
-      <h1 class="text-6xl font-bold text-slate-200 mb-4">404</h1>
-      <p class="text-xl text-slate-600 mb-8">文章不存在</p>
-      <NuxtLink to="/" class="px-6 py-3 bg-slate-900 text-white font-medium rounded-lg hover:bg-slate-800 transition-all">
-        返回首页
-      </NuxtLink>
-    </div>
   </div>
 </template>
 
@@ -119,8 +111,16 @@ const { getPostBySlug, getRelatedPosts, incrementViews, incrementLikes, formatDa
 
 const slug = route.params.slug as string
 const postData = await getPostBySlug(slug)
-const post = ref<Post | null>(postData)
-const relatedPosts = post.value ? await getRelatedPosts(post.value.id, 3) : []
+
+if (!postData) {
+  throw createError({
+    statusCode: 404,
+    statusMessage: '文章不存在'
+  })
+}
+
+const post = ref<Post>(postData)
+const relatedPosts = await getRelatedPosts(post.value.id, 3)
 
 // Increment views on page load
 if (post.value) {

@@ -1,3 +1,5 @@
+export type PostStatus = 'draft' | 'published' | 'offline'
+
 export interface Post {
   id: number
   slug: string
@@ -7,7 +9,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number
@@ -42,7 +44,6 @@ export interface Author {
 export interface Stats {
   total_posts: number
   published_posts: number
-  draft_posts: number
   total_views: number
   total_likes: number
   total_categories: number
@@ -101,7 +102,7 @@ export const useApi = () => {
   const apiBase = config.public.apiBase
 
   // Posts - use $fetch for fresh data
-  const getAllPosts = async (status?: 'draft' | 'published') => {
+  const getAllPosts = async (status?: PostStatus) => {
     try {
       const url = status ? `${apiBase}/posts?status=${status}` : `${apiBase}/posts`
       const response = await $fetch<{ data: Post[] } | Post[]>(url)
@@ -115,7 +116,7 @@ export const useApi = () => {
   }
 
   // Posts with pagination
-  const getAllPostsPaginated = async (options?: { status?: 'draft' | 'published', page?: number, limit?: number }) => {
+  const getAllPostsPaginated = async (options?: { status?: PostStatus, page?: number, limit?: number }) => {
     try {
       const params = new URLSearchParams()
       if (options?.status) params.append('status', options.status)
