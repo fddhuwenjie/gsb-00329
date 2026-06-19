@@ -1,3 +1,5 @@
+export type PostStatus = 'draft' | 'published' | 'archived'
+
 export interface Post {
   id: number
   slug: string
@@ -7,7 +9,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number

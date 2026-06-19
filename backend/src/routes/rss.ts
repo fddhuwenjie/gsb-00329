@@ -1,10 +1,13 @@
 import { Router } from 'express'
 import { postRepository } from '../repositories/postRepository.js'
+import { PUBLIC_POST_STATUSES } from '../types.js'
 
 const router = Router()
 
 router.get('/', (req, res) => {
-  const result = postRepository.findAllPaginated({ status: 'published', limit: 20 })
+  // RSS 也是公网入口，必须严格走 PUBLIC_POST_STATUSES：
+  // 这样「下线后立即不再出现在 RSS 阅读器」是稳定行为。
+  const result = postRepository.findAllPaginated({ statuses: PUBLIC_POST_STATUSES, limit: 20 })
   const posts = result.data
   
   const baseUrl = process.env.SITE_URL || 'http://localhost:8091'

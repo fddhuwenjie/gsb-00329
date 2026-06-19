@@ -2,6 +2,14 @@ import { ref } from 'vue'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
 
+export type PostStatus = 'draft' | 'published' | 'archived'
+
+export const POST_STATUS_LABELS: Record<PostStatus, string> = {
+  draft: '草稿',
+  published: '已发布',
+  archived: '已下线',
+}
+
 export interface Post {
   id: number
   slug: string
@@ -11,7 +19,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number
@@ -90,12 +98,18 @@ export const useApi = () => {
   const error = ref<string | null>(null)
 
   // Posts
-  const getAllPosts = async (options?: { status?: 'draft' | 'published', page?: number, limit?: number, search?: string }) => {
+  // 管理端默认要看到 draft / published / archived 三种状态，
+  // 因此只要不显式指定 status，就让后端走 includeAll 路径。
+  const getAllPosts = async (options?: { status?: PostStatus, page?: number, limit?: number, search?: string }) => {
     loading.value = true
     error.value = null
     try {
       const params = new URLSearchParams()
-      if (options?.status) params.append('status', options.status)
+      if (options?.status) {
+        params.append('status', options.status)
+      } else {
+        params.append('includeAll', '1')
+      }
       if (options?.page) params.append('page', options.page.toString())
       if (options?.limit) params.append('limit', options.limit.toString())
       if (options?.search) params.append('search', options.search)
@@ -114,7 +128,8 @@ export const useApi = () => {
     loading.value = true
     error.value = null
     try {
-      return await fetchApi<Post>(`/posts/${id}`)
+      // 编辑器要能打开草稿/下线状态的文章
+      return await fetchApi<Post>(`/posts/${id}?includeAll=1`)
     } catch (e) {
       error.value = (e as Error).message
       return null
@@ -170,6 +185,27 @@ export const useApi = () => {
     } catch (e) {
       error.value = (e as Error).message
       return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // 批量切换状态：发布 / 下线 / 转草稿。事务一次性写库，避免 UI 列表与
+  // 实际库内状态在批处理中途出现不一致。
+  const bulkUpdateStatus = async (ids: number[], status: PostStatus) => {
+    loading.value = true
+    error.value = null
+    try {
+      return await fetchApi<{ updated: number; status: PostStatus; ids: number[] }>(
+        '/posts/bulk-status',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ids, status }),
+        }
+      )
+    } catch (e) {
+      error.value = (e as Error).message
+      throw e
     } finally {
       loading.value = false
     }
@@ -317,6 +353,7 @@ export const useApi = () => {
     createPost,
     updatePost,
     deletePost,
+    bulkUpdateStatus,
     getAllCategories,
     getCategoryById,
     createCategory,
