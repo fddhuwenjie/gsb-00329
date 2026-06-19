@@ -17,6 +17,8 @@ export interface Author {
   created_at: string
 }
 
+export type PostStatus = 'draft' | 'published' | 'offline'
+
 export interface Post {
   id: number
   slug: string
@@ -26,7 +28,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number
@@ -55,7 +57,7 @@ export interface CreatePostInput {
   image?: string
   category_id?: number
   author_id?: number
-  status?: 'draft' | 'published'
+  status?: PostStatus
   read_time?: number
   tags?: string[]
 }
@@ -68,7 +70,7 @@ export interface UpdatePostInput {
   image?: string
   category_id?: number
   author_id?: number
-  status?: 'draft' | 'published'
+  status?: PostStatus
   read_time?: number
   tags?: string[]
 }

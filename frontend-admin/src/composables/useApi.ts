@@ -2,6 +2,8 @@ import { ref } from 'vue'
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3002/api'
 
+export type PostStatus = 'draft' | 'published' | 'offline'
+
 export interface Post {
   id: number
   slug: string
@@ -11,7 +13,7 @@ export interface Post {
   image: string | null
   category_id: number | null
   author_id: number | null
-  status: 'draft' | 'published'
+  status: PostStatus
   read_time: number
   views: number
   likes: number
@@ -55,6 +57,7 @@ export interface Stats {
   total_posts: number
   published_posts: number
   draft_posts: number
+  offline_posts: number
   total_views: number
   total_likes: number
   total_categories: number
@@ -90,7 +93,7 @@ export const useApi = () => {
   const error = ref<string | null>(null)
 
   // Posts
-  const getAllPosts = async (options?: { status?: 'draft' | 'published', page?: number, limit?: number, search?: string }) => {
+  const getAllPosts = async (options?: { status?: PostStatus, page?: number, limit?: number, search?: string }) => {
     loading.value = true
     error.value = null
     try {
@@ -170,6 +173,38 @@ export const useApi = () => {
     } catch (e) {
       error.value = (e as Error).message
       return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const updatePostStatus = async (id: number, status: PostStatus) => {
+    loading.value = true
+    error.value = null
+    try {
+      return await fetchApi<Post>(`/posts/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status })
+      })
+    } catch (e) {
+      error.value = (e as Error).message
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const bulkUpdatePostsStatus = async (ids: number[], status: PostStatus) => {
+    loading.value = true
+    error.value = null
+    try {
+      return await fetchApi<{ updated: number }>('/posts/bulk-status', {
+        method: 'PATCH',
+        body: JSON.stringify({ ids, status })
+      })
+    } catch (e) {
+      error.value = (e as Error).message
+      throw e
     } finally {
       loading.value = false
     }
@@ -262,12 +297,22 @@ export const useApi = () => {
     }
   }
 
-  // Stats
+  // Stats - combines public stats with status counts for admin dashboard
   const getStats = async () => {
     loading.value = true
     error.value = null
     try {
-      return await fetchApi<Stats>('/stats')
+      const [publicStats, statusCounts] = await Promise.all([
+        fetchApi<Omit<Stats, 'draft_posts' | 'offline_posts'>>('/stats'),
+        fetchApi<{ total: number, draft: number, published: number, offline: number }>('/posts/stats/by-status')
+      ])
+      return {
+        ...publicStats,
+        total_posts: statusCounts.total,
+        published_posts: statusCounts.published,
+        draft_posts: statusCounts.draft,
+        offline_posts: statusCounts.offline
+      } as Stats
     } catch (e) {
       error.value = (e as Error).message
       return null
@@ -317,6 +362,8 @@ export const useApi = () => {
     createPost,
     updatePost,
     deletePost,
+    updatePostStatus,
+    bulkUpdatePostsStatus,
     getAllCategories,
     getCategoryById,
     createCategory,

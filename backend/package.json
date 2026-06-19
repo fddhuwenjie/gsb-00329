@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "db:seed": "tsx src/seed.ts"
+    "db:seed": "tsx src/seed.ts",
+    "test": "tsx test/post-status.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
